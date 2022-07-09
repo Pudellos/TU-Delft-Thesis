@@ -7,6 +7,96 @@ from alpha_blending import linear_regression_multiE
 import cv2
 from scipy import odr
 
+def phantom_map(fn,inserts=np.empty(0),map_type='rho',error_map=False,plot=False):
+    #read image dimensions:
+    pixels=np.full(np.shape(pydicom.dcmread(fn).pixel_array),1.0) #relative water density to water = 1
+    if map_type=='I':
+        pixels=np.full(np.shape(pydicom.dcmread(fn).pixel_array),75.0) #water I = 75eV
+    
+    inserts_dict={'0': {'centre' : (int(512/2-1), int(58)),'radius' : 22},
+               '1' : {'centre' :(int(117), int(117)),'radius' : 22},
+               '2' : {'centre' :(int(512-117), int(115)),'radius' : 22},
+               '3' : {'centre' :(int(181), int(179)),'radius' : 22},
+               '4' : {'centre' :(int(512/2), int(150+2)),'radius' : 7},
+               '5' : {'centre' :(int(512-183), int(179)),'radius' : 22},
+               '6' : {'centre' :(int(57), int(512/2)),'radius' : 22},
+               '7' : {'centre' :(int(152), int(512/2)),'radius' : 22},
+               '8' : {'centre' :(int(512/2), int(512/2-2)),'radius' : 18},
+               '9' : {'centre' :(int(358),int(512/2-2)),'radius' : 22},
+               '10' : {'centre' :(int(453), int(512/2-2)),'radius' : 22},
+               '11' : {'centre' :(int(184), int(512-184)),'radius' : 22},
+               '12' : {'centre' :(int(512/2+3), int(360-1)),'radius' : 22},
+               '13' : {'centre' :(int(512-182), int(512-184)),'radius' : 22},
+               '14' : {'centre' :(int(117), int(512-117)),'radius' : 22},
+               '15' : {'centre' :(int(512-115), int(512-117)),'radius' : 22},
+               '16' : {'centre' :(int(512/2), int(440)),'radius' : 22}}
+    
+    #specify electron densities:
+    if map_type=='rho':
+        air=0.00001
+#         water=1.0
+        inserts_init=0.9
+        boundary=0.00001
+    if map_type=='I':
+        air=15 #eV
+#         water=75 #eV
+        inserts_init=75
+        boundary=15  
+        
+    #create instert:
+    for key, val in inserts_dict.items():
+        for x in range(int(val['centre'][0] - val['radius']), int(val['centre'][0] + val['radius'])):
+                for y in range(val['centre'][1] - val['radius'], val['centre'][1] + val['radius']):
+                    if (x - val['centre'][0])**2 + (y-val['centre'][1])**2 <=val['radius']**2:pixels[y][x]=inserts_init
+                
+    centres_elipse=[((int(512/2+2)),(int(512/2)-7)),((int(512/2)),(int(512/2)+15))]
+    axesLengths = [(285, 232),(278, 234)]
+    angle_Start=[180,0]
+    angle_End=[360,180]
+    
+#     create air:
+    empty=[]
+    for i in range(len(centres_elipse)):
+        pixels = cv2.ellipse(pixels, centres_elipse[i], axesLengths[i],
+               0, angle_Start[i], angle_End[i], (boundary,boundary,boundary), 1)   
+    for row in range(len(pixels)):
+        try:
+            start=np.where(pixels[row]==boundary)[0][0]
+            end=np.where(pixels[row]==boundary)[0][-1]
+        except:
+            empty.append(row)
+            start=0
+            end=-1
+
+        if pixels[row][0]>=boundary:
+            pixels[row][0:start]=air
+            if row<=143 or row>=365:pixels[row][end:]=air    
+        for i in range(len(pixels[0])):
+            for j in empty:
+                if j<=100 or j>=500:pixels[j][i]=air
+            if i>=477:pixels[i]=air
+
+    #assign inserts values
+    if map_type=='rho':
+        if np.any(inserts):
+            if not error_map: 
+                inserts=rho_rel(inserts)
+            if error_map: 
+                inserts=rho_rel_err(inserts)
+     
+    if np.any(inserts):
+        for key, val in inserts_dict.items():
+            for x in range(int(val['centre'][0] - val['radius']), int(val['centre'][0] + val['radius'])):
+                for y in range(val['centre'][1] - val['radius'], val['centre'][1] + val['radius']):
+                    if (x - val['centre'][0])**2 + (y-val['centre'][1])**2 <=val['radius']**2 : pixels[y][x]=inserts[int(key)]
+
+#     #plot
+    if plot:
+        fig, ax = plt.subplots(figsize=(8,6))
+        shw = ax.imshow(pixels,cmap=plt.cm.bone)
+        bar = plt.colorbar(shw)
+        plt.show()
+    return(pixels)
 
 def alpha_blending_dualE(fps,inserts_densities,inserts_densities_err):
     """
